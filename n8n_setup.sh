@@ -8,7 +8,7 @@ fi
 echo "Đang cập nhật hệ thống..."
 apt update && apt upgrade -y
 
-read -p "Nhập tên miền của bạn (ví dụ: example.com): " DOMAIN
+read -p "Nhập tên miền của bạn (ví dụ: n8n.example.com): " DOMAIN
 read -p "Nhập email của bạn để cấp SSL (ví dụ: admin@example.com): " EMAIL
 read -p "Nhập tên database cho n8n (ví dụ: n8n_db): " DB_NAME
 read -p "Nhập username cho database (ví dụ: n8n_user): " DB_USER
@@ -98,3 +98,4 @@ echo "Đường dẫn file cấu hình Docker: /opt/n8n/docker-compose.yml"
 echo "Đường dẫn file cấu hình Nginx: /etc/nginx/sites-available/n8n"
 echo "========================================"
 echo "Vui lòng lưu lại thông tin trên để sử dụng khi cần!"
+echo "Liên hệ Telegram @haduyson nếu bạn cần support"
