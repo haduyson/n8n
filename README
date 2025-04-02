@@ -16,3 +16,9 @@ ufw allow 443
 # File cấu hình quan trọng được lưu tại 
 /opt/n8n/docker-compose.yml (Docker) 
 /etc/nginx/sites-available/n8n (Nginx).
+
+
+# Xoá những gì đã cài đặt (n8n và mọi thứ liên quan đến nó)
+wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/n8n_remove.sh
+chmod +x n8n_setup.sh
+sudo ./n8n_setup.sh
