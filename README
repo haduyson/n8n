@@ -1,0 +1,10 @@
+# Tải file về server
+wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/n8n_setup.sh
+
+# Cấp quyền thực thi cho file:
+chmod +x n8n_setup.sh
+
+# Chạy Scripts với quyền root
+sudo ./n8n_setup.sh
+
+# Nhập thông tin cần thiết: Domain - Email - Tên DB - Username DB - Password DB
