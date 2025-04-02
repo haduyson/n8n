@@ -8,3 +8,11 @@ chmod +x n8n_setup.sh
 sudo ./n8n_setup.sh
 
 # Nhập thông tin cần thiết: Domain - Email - Tên DB - Username DB - Password DB
+
+# Đảm bảo mở port 80 và 443 trên firewall 
+ufw allow 80
+ufw allow 443
+
+# File cấu hình quan trọng được lưu tại 
+/opt/n8n/docker-compose.yml (Docker) 
+/etc/nginx/sites-available/n8n (Nginx).
