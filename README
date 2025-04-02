@@ -22,3 +22,5 @@ ufw allow 443
 wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/n8n_remove.sh
 chmod +x n8n_setup.sh
 sudo ./n8n_setup.sh
+
+# Yêu cầu nhập đúng thông tin username và database của DB mới được xoá.
