@@ -1,4 +1,6 @@
 #!/bin/bash
+exec > >(tee -a /var/log/setupn8n.log) 2>&1
+#!/bin/bash
 
 # Kiểm tra quyền root
 if [ "$EUID" -ne 0 ]; then
