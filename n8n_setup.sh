@@ -6,8 +6,8 @@ echo "Bắt đầu cài đặt n8n..."
 # Yêu cầu người dùng nhập thông tin
 read -p "Nhập tên miền của bạn (ví dụ: n8n.example.com): " DOMAIN
 read -p "Nhập email để cấp chứng chỉ SSL (Let's Encrypt): " EMAIL
-read -p "Nhập tên database PostgreSQL: " DB_NAME
-read -p "Nhập tên người dùng database PostgreSQL: " DB_USER
+read -p "Nhập tên database PostgreSQL (ví dụ: n8n_DB): " DB_NAME
+read -p "Nhập tên người dùng database PostgreSQL (ví dụ: n8n_USER): " DB_USER
 read -s -p "Nhập mật khẩu database PostgreSQL: " DB_PASSWORD
 echo "" # Thêm dòng mới sau khi nhập mật khẩu
 
