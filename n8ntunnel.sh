@@ -133,20 +133,21 @@ rm cloudflared-linux-amd64.deb
 echo "Đang tạo Cloudflare Tunnel..."
 cloudflared login
 cloudflared tunnel create n8n-tunnel
+TUNNEL_ID=$(ls /root/.cloudflared/*.json | grep -o '[a-f0-9-]\{36\}') # Lấy tunnel ID từ file .json
 
 # Tạo file cấu hình cho tunnel
 cat <<EOF > ~/.cloudflared/config.yml
 tunnel: n8n-tunnel
-credentials-file: ~/.cloudflared/n8n-tunnel.json
+credentials-file: /root/.cloudflared/${TUNNEL_ID}.json
 ingress:
   - hostname: ${DOMAIN}
     service: http://localhost:80
   - service: http_status:404
 EOF
 
-# Cài đặt cloudflared như một dịch vụ systemd để chạy liên tục
+# Cài đặt cloudflared như một dịch vụ systemd
 echo "Đang cấu hình Cloudflare Tunnel chạy tự động..."
-cloudflared service install
+cloudflared service install /root/.cloudflared/${TUNNEL_ID}.json
 systemctl enable cloudflared
 systemctl start cloudflared
 
