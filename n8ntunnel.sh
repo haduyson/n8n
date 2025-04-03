@@ -147,18 +147,26 @@ EOF
 
 # Cài đặt cloudflared như một dịch vụ systemd
 echo "Đang cấu hình Cloudflare Tunnel chạy tự động..."
-cloudflared service install /root/.cloudflared/${TUNNEL_ID}.json
+cat <<EOF > /etc/systemd/system/cloudflared.service
+[Unit]
+Description=Cloudflare Tunnel for n8n
+After=network.target
+
+[Service]
+Type=notify
+User=root
+ExecStart=/usr/local/bin/cloudflared tunnel run --config ~/.cloudflared/config.yml
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
 systemctl enable cloudflared
 systemctl start cloudflared
 
-# Cấu hình tường lửa UFW (mở port 80 và 443 cục bộ)
-echo "Đang cấu hình tường lửa..."
-apt install -y ufw
-ufw allow 80
-ufw allow 443
-ufw --force enable
-
-# Hướng dẫn người dùng cấu hình DNS trên Cloudflare
+# Hiển thị hướng dẫn và Tunnel ID
 echo "Cài đặt hoàn tất!"
 echo "Truy cập n8n tại: https://${DOMAIN} (sau khi hoàn tất cấu hình DNS)"
 echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
@@ -170,7 +178,7 @@ echo "2. Chọn domain '${DOMAIN}'."
 echo "3. Vào mục 'DNS' > 'Records'."
 echo "4. Thêm một bản ghi CNAME:"
 echo "   - Name: ${DOMAIN}"
-echo "   - Target: Copy giá trị 'Tunnel ID' từ file ~/.cloudflared/n8n-tunnel.json (thường là một chuỗi UUID) và thêm '.cfargotunnel.com' (ví dụ: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.cfargotunnel.com)."
+echo "   - Target: Tunnel ID là $TUNNEL_ID, thêm '.cfargotunnel.com' (ví dụ: $TUNNEL_ID.cfargotunnel.com)."
 echo "   - Proxy status: Bật ( Proxied )."
 echo "5. Lưu bản ghi và chờ DNS cập nhật (thường mất vài phút)."
 echo "Sau khi hoàn tất, bạn có thể truy cập https://${DOMAIN} từ bên ngoài."
