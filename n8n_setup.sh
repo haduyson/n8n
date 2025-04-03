@@ -1,30 +1,28 @@
 #!/bin/bash
 exec > >(tee -a /var/log/setupn8n.log) 2>&1
-#!/bin/bash
 
 # Kiểm tra quyền root
 if [ "$EUID" -ne 0 ]; then
-  echo "Vui lòng chạy script này với quyền root (sudo)."
+  echo "Lỗi: Vui lòng chạy script này với quyền root (sudo)."
   exit 1
 fi
 
 # Cập nhật hệ thống
 echo "Cập nhật hệ thống..."
-apt update && apt upgrade -y
+apt update && apt upgrade -y || { echo "Lỗi: Không thể cập nhật hệ thống."; exit 1; }
 
 # Cài đặt Docker
 echo "Cài đặt Docker..."
-apt install -y docker.io
-systemctl start docker
-systemctl enable docker
+apt install -y docker.io || { echo "Lỗi: Cài đặt Docker thất bại."; exit 1; }
+systemctl start docker && systemctl enable docker
 
 # Cài đặt Docker Compose
 echo "Cài đặt Docker Compose..."
-apt install -y docker-compose
+apt install -y docker-compose || { echo "Lỗi: Cài đặt Docker Compose thất bại."; exit 1; }
 
 # Cài đặt Nginx và Certbot
 echo "Cài đặt Nginx và Certbot..."
-apt install -y nginx certbot python3-certbot-nginx
+apt install -y nginx certbot python3-certbot-nginx || { echo "Lỗi: Cài đặt Nginx hoặc Certbot thất bại."; exit 1; }
 
 # Yêu cầu người dùng nhập thông tin
 read -p "Nhập domain cho n8n (ví dụ: n8n.example.com): " DOMAIN
@@ -38,7 +36,7 @@ echo
 mkdir -p /opt/n8n
 cd /opt/n8n
 
-# Tạo file docker-compose.yml
+# Tạo file docker-compose.yml (giữ nguyên như cũ)
 cat <<EOF > docker-compose.yml
 version: '3.8'
 services:
@@ -75,7 +73,7 @@ volumes:
   postgres_data:
 EOF
 
-# Tạo file .env để lưu biến môi trường
+# Tạo file .env
 cat <<EOF > .env
 DOMAIN=$DOMAIN
 DB_NAME=$DB_NAME
@@ -85,9 +83,39 @@ EOF
 
 # Khởi động Docker Compose
 echo "Khởi động n8n và PostgreSQL..."
-docker-compose up -d
+docker-compose up -d || { echo "Lỗi: Không thể khởi động container."; exit 1; }
+sleep 5
+if ! docker-compose ps | grep -q "Up"; then
+    echo "Lỗi: Container không chạy. Xem log:"
+    docker-compose logs
+    exit 1
+fi
 
-# Cấu hình Nginx
+# Cấu hình Nginx cơ bản (chỉ cổng 80)
+cat <<EOF > /etc/nginx/sites-available/n8n
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://localhost:5678;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+# Kích hoạt cấu hình Nginx
+ln -s /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx || { echo "Lỗi: Cấu hình Nginx không hợp lệ."; exit 1; }
+
+# Cấp chứng chỉ SSL với Certbot
+echo "Cấp chứng chỉ SSL với Let's Encrypt..."
+certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos --non-interactive || { echo "Lỗi: Không thể cấp chứng chỉ SSL."; exit 1; }
+
+# Cập nhật cấu hình Nginx để dùng SSL
 cat <<EOF > /etc/nginx/sites-available/n8n
 server {
     listen 80;
@@ -112,13 +140,7 @@ server {
 }
 EOF
 
-# Kích hoạt cấu hình Nginx
-ln -s /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
-
-# Cấp chứng chỉ SSL với Certbot
-echo "Cấp chứng chỉ SSL với Let's Encrypt..."
-certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos --non-interactive
+nginx -t && systemctl reload nginx || { echo "Lỗi: Cấu hình Nginx sau SSL không hợp lệ."; exit 1; }
 
 # Mở cổng 80 và 443 trên firewall (nếu dùng ufw)
 if command -v ufw &> /dev/null; then
@@ -128,7 +150,7 @@ if command -v ufw &> /dev/null; then
     ufw reload
 fi
 
-# Hiển thị thông tin sau khi cài đặt
+# Hiển thị thông tin
 echo "========================================"
 echo "Cài đặt n8n hoàn tất!"
 echo "Thông tin quan trọng:"
