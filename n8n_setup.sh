@@ -3,99 +3,116 @@ exec > >(tee -a /var/log/setupn8n.log) 2>&1
 
 # Kiểm tra quyền root
 if [ "$EUID" -ne 0 ]; then
-  echo "Lỗi: Vui lòng chạy script này với quyền root (sudo)."
+  echo "Vui lòng chạy script này với quyền root (sudo)."
   exit 1
 fi
 
 # Cập nhật hệ thống
-echo "Cập nhật hệ thống..."
-apt update && apt upgrade -y || { echo "Lỗi: Không thể cập nhật hệ thống."; exit 1; }
+echo "Đang cập nhật hệ thống..."
+apt update && apt upgrade -y
+
+# Cài đặt các gói cần thiết
+echo "Đang cài đặt các gói cơ bản..."
+apt install -y ca-certificates curl gnupg lsb-release
+
+# Nhập thông tin từ người dùng
+echo "Vui lòng nhập các thông tin cần thiết:"
+read -p "Domain của bạn (ví dụ: example.com): " DOMAIN
+read -p "Tên database cho n8n (mặc định: n8n): " DB_NAME
+DB_NAME=${DB_NAME:-n8n}
+read -p "Username cho database (mặc định: n8n): " DB_USER
+DB_USER=${DB_USER:-n8n}
+read -s -p "Password cho database: " DB_PASSWORD
+echo ""
+read -s -p "Xác nhận lại password: " DB_PASSWORD_CONFIRM
+echo ""
+
+# Kiểm tra password có khớp không
+if [ "$DB_PASSWORD" != "$DB_PASSWORD_CONFIRM" ]; then
+  echo "Password không khớp. Thoát script."
+  exit 1
+fi
 
 # Cài đặt Docker
-echo "Cài đặt Docker..."
-apt install -y docker.io || { echo "Lỗi: Cài đặt Docker thất bại."; exit 1; }
-systemctl start docker && systemctl enable docker
+echo "Đang cài đặt Docker..."
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt update
+apt install -y docker-ce docker-ce-cli containerd.io
 
 # Cài đặt Docker Compose
-echo "Cài đặt Docker Compose..."
-apt install -y docker-compose || { echo "Lỗi: Cài đặt Docker Compose thất bại."; exit 1; }
-
-# Cài đặt Nginx và Certbot
-echo "Cài đặt Nginx và Certbot..."
-apt install -y nginx certbot python3-certbot-nginx || { echo "Lỗi: Cài đặt Nginx hoặc Certbot thất bại."; exit 1; }
-
-# Yêu cầu người dùng nhập thông tin
-read -p "Nhập domain cho n8n (ví dụ: n8n.example.com): " DOMAIN
-read -p "Nhập email để cấp SSL: " EMAIL
-read -p "Nhập tên database cho n8n: " DB_NAME
-read -p "Nhập username cho database: " DB_USER
-read -s -p "Nhập password cho database: " DB_PASSWORD
-echo
+echo "Đang cài đặt Docker Compose..."
+curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
 
 # Tạo thư mục cho n8n
-mkdir -p /opt/n8n
-cd /opt/n8n
+echo "Đang tạo thư mục và file cấu hình..."
+mkdir -p ~/n8n
+cd ~/n8n
 
-# Tạo file docker-compose.yml (giữ nguyên như cũ)
+# Tạo file docker-compose.yml
 cat <<EOF > docker-compose.yml
-version: '3.8'
-services:
-  n8n:
-    image: n8nio/n8n:latest
-    restart: always
-    environment:
-      - N8N_HOST=\${DOMAIN}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=\${DB_NAME}
-      - DB_POSTGRESDB_USER=\${DB_USER}
-      - DB_POSTGRESDB_PASSWORD=\${DB_PASSWORD}
-    volumes:
-      - n8n_data:/home/node/.n8n
-    depends_on:
-      - postgres
+version: "3.8"
 
+services:
   postgres:
     image: postgres:16
     restart: always
     environment:
-      - POSTGRES_USER=\${DB_USER}
-      - POSTGRES_PASSWORD=\${DB_PASSWORD}
-      - POSTGRES_DB=\${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - n8n_network
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${DOMAIN}/
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${DB_NAME}
+      - DB_POSTGRESDB_USER=${DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - postgres
+    networks:
+      - n8n_network
 
 volumes:
   n8n_data:
   postgres_data:
-EOF
 
-# Tạo file .env
-cat <<EOF > .env
-DOMAIN=$DOMAIN
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
+networks:
+  n8n_network:
+    driver: bridge
 EOF
 
 # Khởi động Docker Compose
-echo "Khởi động n8n và PostgreSQL..."
-docker-compose up -d || { echo "Lỗi: Không thể khởi động container."; exit 1; }
-sleep 5
-if ! docker-compose ps | grep -q "Up"; then
-    echo "Lỗi: Container không chạy. Xem log:"
-    docker-compose logs
-    exit 1
-fi
+echo "Đang khởi động n8n và PostgreSQL..."
+docker-compose up -d
 
-# Cấu hình Nginx cơ bản (chỉ cổng 80)
+# Cài đặt Nginx
+echo "Đang cài đặt Nginx..."
+apt install -y nginx
+
+# Tạo file cấu hình Nginx
 cat <<EOF > /etc/nginx/sites-available/n8n
 server {
     listen 80;
-    server_name $DOMAIN;
+    server_name ${DOMAIN};
 
     location / {
         proxy_pass http://localhost:5678;
@@ -109,58 +126,22 @@ EOF
 
 # Kích hoạt cấu hình Nginx
 ln -s /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx || { echo "Lỗi: Cấu hình Nginx không hợp lệ."; exit 1; }
+nginx -t && systemctl restart nginx
 
-# Cấp chứng chỉ SSL với Certbot
-echo "Cấp chứng chỉ SSL với Let's Encrypt..."
-certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos --non-interactive || { echo "Lỗi: Không thể cấp chứng chỉ SSL."; exit 1; }
+# Cài đặt Certbot và cấu hình SSL
+echo "Đang cài đặt Certbot và cấu hình SSL..."
+apt install -y certbot python3-certbot-nginx
+certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos --email admin@${DOMAIN}
 
-# Cập nhật cấu hình Nginx để dùng SSL
-cat <<EOF > /etc/nginx/sites-available/n8n
-server {
-    listen 80;
-    server_name $DOMAIN;
-    return 301 https://\$host\$request_uri;
-}
+# Cấu hình tường lửa UFW
+echo "Đang cấu hình tường lửa..."
+apt install -y ufw
+ufw allow 80
+ufw allow 443
+ufw --force enable
 
-server {
-    listen 443 ssl;
-    server_name $DOMAIN;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-
-    location / {
-        proxy_pass http://localhost:5678;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-
-nginx -t && systemctl reload nginx || { echo "Lỗi: Cấu hình Nginx sau SSL không hợp lệ."; exit 1; }
-
-# Mở cổng 80 và 443 trên firewall (nếu dùng ufw)
-if command -v ufw &> /dev/null; then
-    echo "Mở cổng 80 và 443 trên firewall..."
-    ufw allow 80
-    ufw allow 443
-    ufw reload
-fi
-
-# Hiển thị thông tin
-echo "========================================"
-echo "Cài đặt n8n hoàn tất!"
-echo "Thông tin quan trọng:"
-echo "- Domain: $DOMAIN"
-echo "- Email SSL: $EMAIL"
-echo "- Tên database: $DB_NAME"
-echo "- Username database: $DB_USER"
-echo "- Password database: $DB_PASSWORD"
-echo "- File cấu hình Docker: /opt/n8n/docker-compose.yml"
-echo "- File biến môi trường: /opt/n8n/.env"
-echo "- File cấu hình Nginx: /etc/nginx/sites-available/n8n"
-echo "Truy cập n8n tại: https://$DOMAIN"
-echo "========================================"
+# Hoàn tất
+echo "Cài đặt hoàn tất!"
+echo "Truy cập n8n tại: https://${DOMAIN}"
+echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
+echo "Dữ liệu PostgreSQL được lưu trong ~/n8n/postgres_data"
