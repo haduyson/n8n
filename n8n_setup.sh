@@ -1,101 +1,111 @@
 #!/bin/bash
 
-if [ "$EUID" -ne 0 ]; then
-  echo "Vui lòng chạy script này với quyền root (sudo)."
-  exit 1
-fi
+# Thông báo bắt đầu cài đặt
+echo "Bắt đầu cài đặt n8n..."
 
-echo "Đang cập nhật hệ thống..."
-apt update && apt upgrade -y
-
+# Yêu cầu người dùng nhập thông tin
 read -p "Nhập tên miền của bạn (ví dụ: n8n.example.com): " DOMAIN
-read -p "Nhập email của bạn để cấp SSL (ví dụ: admin@example.com): " EMAIL
-read -p "Nhập tên database cho n8n (ví dụ: n8n_db): " DB_NAME
-read -p "Nhập username cho database (ví dụ: n8n_user): " DB_USER
-read -s -p "Nhập password cho database: " DB_PASS
-echo ""
+read -p "Nhập email để cấp chứng chỉ SSL (Let's Encrypt): " EMAIL
+read -p "Nhập tên database PostgreSQL: " DB_NAME
+read -p "Nhập tên người dùng database PostgreSQL: " DB_USER
+read -s -p "Nhập mật khẩu database PostgreSQL: " DB_PASSWORD
+echo "" # Thêm dòng mới sau khi nhập mật khẩu
 
-echo "Đang cài đặt các công cụ cần thiết..."
-apt install -y curl nginx certbot python3-certbot-nginx postgresql postgresql-contrib
+# Cập nhật hệ thống
+echo "Cập nhật hệ thống..."
+sudo apt update -y
+sudo apt upgrade -y
 
-echo "Đang cài đặt Docker..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-rm get-docker.sh
+# Cài đặt Docker và Docker Compose
+echo "Cài đặt Docker và Docker Compose..."
+sudo apt install docker.io docker-compose-plugin -y
+sudo systemctl start docker
+sudo systemctl enable docker
 
-echo "Đang cài đặt Docker Compose..."
-curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
+# Cài đặt PostgreSQL
+echo "Cài đặt PostgreSQL..."
+sudo apt install postgresql postgresql-contrib -y
 
-echo "Đang cấu hình PostgreSQL..."
-sudo -u postgres psql <<EOF
-CREATE DATABASE $DB_NAME;
-CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASS';
-GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
-EOF
+# Cấu hình PostgreSQL
+echo "Cấu hình PostgreSQL..."
+sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
 
-echo "Đang tạo cấu hình Docker cho n8n..."
-mkdir -p /opt/n8n
-cd /opt/n8n
-cat > docker-compose.yml <<EOF
+# Tạo thư mục lưu trữ dữ liệu n8n và chứng chỉ SSL
+echo "Tạo thư mục lưu trữ dữ liệu n8n và chứng chỉ SSL..."
+sudo mkdir -p /opt/n8n/data
+sudo mkdir -p /opt/letsencrypt
+
+# Tạo file docker-compose.yml
+echo "Tạo file docker-compose.yml..."
+cat <<EOF | sudo tee /opt/n8n/docker-compose.yml
+version: "3.8"
+
 services:
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n
     restart: always
     ports:
       - "5678:5678"
     environment:
-      - N8N_HOST=$DOMAIN
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=n8n
+      - N8N_BASIC_AUTH_PASSWORD=n8n
       - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=127.0.0.1
+      - DB_POSTGRESDB_HOST=host.docker.internal
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=$DB_NAME
       - DB_POSTGRESDB_USER=$DB_USER
-      - DB_POSTGRESDB_PASSWORD=$DB_PASS
+      - DB_POSTGRESDB_PASSWORD=$DB_PASSWORD
+      - N8N_HOST=$DOMAIN
+      - N8N_PROTOCOL=https
+      - N8N_PORT=443
+      - GENERIC_WEBHOOK_URL=https://$DOMAIN/
+      - WEBHOOK_TUNNEL_URL=https://$DOMAIN/
     volumes:
-      - n8n_data:/home/node/.n8n
+      - /opt/n8n/data:/home/node/.n8n
 
-volumes:
-  n8n_data:
+  reverse-proxy:
+    image: traefik:v2.9
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=$EMAIL"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/opt/letsencrypt:/letsencrypt"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(\`$DOMAIN\`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      - "traefik.http.routers.n8n.tls.certresolver=myresolver"
 EOF
 
-echo "Đang cấu hình Nginx..."
-cat > /etc/nginx/sites-available/n8n <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
+# Mở cổng 80 và 443 trên tường lửa
+echo "Mở cổng 80 và 443 trên tường lửa..."
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw enable
 
-    location / {
-        proxy_pass http://localhost:5678;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-}
-EOF
+# Khởi động n8n
+echo "Khởi động n8n..."
+sudo docker compose -f /opt/n8n/docker-compose.yml up -d
 
-ln -s /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
-
-echo "Đang cài đặt chứng chỉ SSL với Let's Encrypt..."
-certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email $EMAIL
-
-echo "Đang khởi động n8n với Docker..."
-docker-compose up -d
-
-echo ""
-echo "========================================"
-echo "Cài đặt hoàn tất! Dưới đây là thông tin quan trọng:"
-echo "========================================"
-echo "Link truy cập n8n: https://$DOMAIN"
-echo "Tên database: $DB_NAME"
-echo "Username database: $DB_USER"
-echo "Password database: $DB_PASS"
-echo "Đường dẫn file cấu hình Docker: /opt/n8n/docker-compose.yml"
-echo "Đường dẫn file cấu hình Nginx: /etc/nginx/sites-available/n8n"
-echo "========================================"
-echo "Vui lòng lưu lại thông tin trên để sử dụng khi cần!"
-echo "Liên hệ Telegram @haduyson nếu bạn cần support"
+# Hiển thị thông tin quan trọng
+echo "Cài đặt n8n thành công!"
+echo "Truy cập n8n tại: https://$DOMAIN"
+echo "File cấu hình docker-compose.yml: /opt/n8n/docker-compose.yml"
+echo "Thư mục lưu trữ dữ liệu n8n: /opt/n8n/data"
+echo "Thư mục lưu trữ chứng chỉ SSL: /opt/letsencrypt"
+echo "Tên người dùng mặc định n8n: n8n"
+echo "Mật khẩu mặc định n8n: n8n"
+echo "Cần hỗ trợ cài đặt (có phí), vui lòng liên hệ Telegram @haduyson"
