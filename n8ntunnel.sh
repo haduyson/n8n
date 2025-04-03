@@ -144,10 +144,13 @@ ingress:
   - service: http_status:404
 EOF
 
-# Chạy tunnel
-cloudflared tunnel run n8n-tunnel &
+# Cài đặt cloudflared như một dịch vụ systemd để chạy liên tục
+echo "Đang cấu hình Cloudflare Tunnel chạy tự động..."
+cloudflared service install
+systemctl enable cloudflared
+systemctl start cloudflared
 
-# Cấu hình tường lửa UFW (mở port 80 và 443 cục bộ, nhưng không cần mở trên router)
+# Cấu hình tường lửa UFW (mở port 80 và 443 cục bộ)
 echo "Đang cấu hình tường lửa..."
 apt install -y ufw
 ufw allow 80
