@@ -20,8 +20,8 @@ ufw allow 443
 
 
 # Xoá những gì đã cài đặt (n8n và mọi thứ liên quan đến nó)
-wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/n8n_remove.sh
-chmod +x n8n_remove.sh
-sudo ./n8n_remove.sh
+wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/removen8ntunnel.sh
+chmod +x removen8ntunnel.sh
+sudo ./removen8ntunnel.sh
 
 # Yêu cầu nhập đúng thông tin username và database của DB mới được xoá.
