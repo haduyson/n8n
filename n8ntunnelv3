@@ -1,0 +1,186 @@
+#!/bin/bash
+exec > >(tee -a /var/log/setupn8n.log) 2>&1
+
+# Kiểm tra quyền root
+if [ "$EUID" -ne 0 ]; then
+  echo "Vui lòng chạy script này với quyền root (sudo)."
+  exit 1
+fi
+
+# Cập nhật hệ thống
+echo "Đang cập nhật hệ thống..."
+apt update && apt upgrade -y
+
+# Cài đặt các gói cần thiết
+echo "Đang cài đặt các gói cơ bản..."
+apt install -y ca-certificates curl gnupg lsb-release
+
+# Nhập thông tin từ người dùng
+echo "Vui lòng nhập các thông tin cần thiết:"
+read -p "Domain của bạn (ví dụ: n8n.example.com): " DOMAIN
+read -p "Tên database cho n8n (mặc định: n8n): " DB_NAME
+DB_NAME=${DB_NAME:-n8n}
+read -p "Username cho database (mặc định: n8n): " DB_USER
+DB_USER=${DB_USER:-n8n}
+read -s -p "Password cho database: " DB_PASSWORD
+echo ""
+read -s -p "Xác nhận lại password: " DB_PASSWORD_CONFIRM
+echo ""
+
+# Kiểm tra password có khớp không
+if [ "$DB_PASSWORD" != "$DB_PASSWORD_CONFIRM" ]; then
+  echo "Password không khớp. Thoát script."
+  exit 1
+fi
+
+# Cài đặt Docker
+echo "Đang cài đặt Docker..."
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt update
+apt install -y docker-ce docker-ce-cli containerd.io
+
+# Cài đặt Docker Compose
+echo "Đang cài đặt Docker Compose..."
+curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+# Tạo thư mục cho n8n
+echo "Đang tạo thư mục và file cấu hình..."
+mkdir -p ~/n8n
+cd ~/n8n
+
+# Tạo file docker-compose.yml
+cat <<EOF > docker-compose.yml
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - n8n_network
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${DOMAIN}/
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${DB_NAME}
+      - DB_POSTGRESDB_USER=${DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - postgres
+    networks:
+      - n8n_network
+
+volumes:
+  n8n_data:
+  postgres_data:
+
+networks:
+  n8n_network:
+    driver: bridge
+EOF
+
+# Khởi động Docker Compose
+echo "Đang khởi động n8n và PostgreSQL..."
+docker-compose up -d
+
+# Cài đặt Cloudflare Tunnel (cloudflared)
+echo "Đang cài đặt Cloudflare Tunnel..."
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+
+# Tự động đăng nhập Cloudflare
+echo "Đang thực hiện đăng nhập Cloudflare..."
+echo "Vui lòng mở link sau trong trình duyệt để xác thực Cloudflare, sau đó quay lại đây:"
+/usr/local/bin/cloudflared login
+echo "Đã hoàn tất xác thực? Nhấn Enter để tiếp tục..."
+read
+
+# Tự động tạo tunnel
+echo "Đang tạo Cloudflare Tunnel..."
+TUNNEL_OUTPUT=$(/usr/local/bin/cloudflared tunnel create n8n)
+TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+if [ -z "$TUNNEL_ID" ]; then
+  echo "Không thể lấy Tunnel ID. Vui lòng kiểm tra lại hoặc tạo tunnel thủ công."
+  exit 1
+fi
+echo "Tunnel ID: ${TUNNEL_ID}"
+
+# Tạo file cấu hình Cloudflare Tunnel với định dạng YAML chính xác
+mkdir -p ~/.cloudflared
+cat <<EOF > ~/.cloudflared/config.yml
+tunnel: ${TUNNEL_ID}
+credentials-file: /root/.cloudflared/${TUNNEL_ID}.json
+ingress:
+  - hostname: ${DOMAIN}
+    service: http://localhost:5678
+  - service: http_status:404
+EOF
+
+# Yêu cầu người dùng thêm CNAME record
+echo "Vui lòng thêm CNAME record trên Cloudflare:"
+echo "1. Đăng nhập vào dashboard Cloudflare."
+echo "2. Chọn domain của bạn (${DOMAIN})."
+echo "3. Thêm một CNAME record:"
+echo "   - Name: ${DOMAIN}"
+echo "   - Target: ${TUNNEL_ID}.cfargotunnel.com"
+echo "   - Proxy status: Proxied"
+echo "Sau khi thêm xong, quay lại đây và nhập 'yes' để tiếp tục."
+read -p "Bạn đã thêm CNAME record chưa? (yes/no): " DNS_CONFIRM
+if [ "$DNS_CONFIRM" != "yes" ]; then
+  echo "Vui lòng thêm CNAME record trước khi tiếp tục. Thoát script."
+  exit 1
+fi
+
+# Tạo systemd service cho cloudflared
+echo "Đang cấu hình Cloudflare Tunnel thành dịch vụ hệ thống..."
+cat <<EOF > /etc/systemd/system/cloudflared.service
+[Unit]
+Description=Cloudflare Tunnel
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared --config /root/.cloudflared/config.yml tunnel run
+Restart=on-failure
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable cloudflared
+systemctl start cloudflared
+
+# Cấu hình tường lửa UFW (chỉ cần SSH)
+echo "Đang cấu hình tường lửa..."
+apt install -y ufw
+ufw allow 22
+ufw --force enable
+
+# Hoàn tất
+echo "Cài đặt hoàn tất!"
+echo "Truy cập n8n tại: https://${DOMAIN}"
+echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
+echo "Dữ liệu PostgreSQL được lưu trong ~/n8n/postgres_data"
+echo "Cloudflare Tunnel đang chạy với Tunnel ID: ${TUNNEL_ID}"
+echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson"
