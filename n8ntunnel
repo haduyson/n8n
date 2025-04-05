@@ -40,6 +40,9 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io
+# Kích hoạt Docker tự động khởi động
+systemctl enable docker
+systemctl start docker
 
 # Cài đặt Docker Compose
 echo "Đang cài đặt Docker Compose..."
@@ -103,6 +106,29 @@ EOF
 # Khởi động Docker Compose
 echo "Đang khởi động n8n và PostgreSQL..."
 docker-compose up -d
+
+# Tạo systemd service cho Docker Compose
+echo "Đang cấu hình Docker Compose tự động khởi động..."
+cat <<EOF > /etc/systemd/system/n8n-docker-compose.service
+[Unit]
+Description=n8n Docker Compose Service
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/root/n8n
+ExecStart=/usr/local/bin/docker-compose up -d
+ExecStop=/usr/local/bin/docker-compose down
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable n8n-docker-compose
+systemctl start n8n-docker-compose
 
 # Cài đặt Cloudflare Tunnel (cloudflared)
 echo "Đang cài đặt Cloudflare Tunnel..."
@@ -186,4 +212,4 @@ echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
 echo "Dữ liệu PostgreSQL được lưu trong ~/n8n/postgres_data"
 echo "Cloudflare Tunnel đang chạy với Tunnel Name: ${TUNNEL_NAME}"
 echo "Tunnel ID: ${TUNNEL_ID}"
-echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson"
+echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson, chỉnh sửa bởi Grok 3"
