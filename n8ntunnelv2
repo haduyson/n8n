@@ -109,15 +109,22 @@ echo "Đang cài đặt Cloudflare Tunnel..."
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
 chmod +x /usr/local/bin/cloudflared
 
-# Yêu cầu người dùng đăng nhập Cloudflare và tạo tunnel
-echo "Vui lòng làm theo hướng dẫn để đăng nhập Cloudflare và tạo tunnel:"
-echo "1. Chạy lệnh sau trong terminal này: /usr/local/bin/cloudflared login"
-echo "2. Sau khi đăng nhập thành công, tạo tunnel bằng lệnh:"
-echo "   /usr/local/bin/cloudflared tunnel create n8n"
-echo "3. Ghi lại Tunnel ID (UUID) được tạo."
-echo "4. Cấu hình DNS trên Cloudflare: Thêm CNAME record từ ${DOMAIN} đến <Tunnel-ID>.cfargotunnel.com"
-echo "5. Quay lại đây và nhập Tunnel ID khi được yêu cầu."
-read -p "Nhập Tunnel ID (UUID) của bạn: " TUNNEL_ID
+# Tự động đăng nhập Cloudflare
+echo "Đang thực hiện đăng nhập Cloudflare..."
+echo "Vui lòng mở link sau trong trình duyệt để xác thực Cloudflare, sau đó quay lại đây:"
+/usr/local/bin/cloudflared login
+echo "Đã hoàn tất xác thực? Nhấn Enter để tiếp tục..."
+read
+
+# Tự động tạo tunnel
+echo "Đang tạo Cloudflare Tunnel..."
+TUNNEL_OUTPUT=$(/usr/local/bin/cloudflared tunnel create n8n)
+TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+if [ -z "$TUNNEL_ID" ]; then
+  echo "Không thể lấy Tunnel ID. Vui lòng kiểm tra lại hoặc tạo tunnel thủ công."
+  exit 1
+fi
+echo "Tunnel ID: ${TUNNEL_ID}"
 
 # Tạo file cấu hình Cloudflare Tunnel
 mkdir -p ~/.cloudflared
@@ -130,11 +137,26 @@ ingress:
   - service: http_status:404
 EOF
 
+# Yêu cầu người dùng thêm CNAME record
+echo "Vui lòng thêm CNAME record trên Cloudflare:"
+echo "1. Đăng nhập vào dashboard Cloudflare."
+echo "2. Chọn domain của bạn (${DOMAIN})."
+echo "3. Thêm một CNAME record:"
+echo "   - Name: ${DOMAIN}"
+echo "   - Target: ${TUNNEL_ID}.cfargotunnel.com"
+echo "   - Proxy status: Proxied"
+echo "Sau khi thêm xong, quay lại đây và nhập 'yes' để tiếp tục."
+read -p "Bạn đã thêm CNAME record chưa? (yes/no): " DNS_CONFIRM
+if [ "$DNS_CONFIRM" != "yes" ]; then
+  echo "Vui lòng thêm CNAME record trước khi tiếp tục. Thoát script."
+  exit 1
+fi
+
 # Chạy Cloudflare Tunnel
 echo "Đang khởi động Cloudflare Tunnel..."
 /usr/local/bin/cloudflared --config ~/.cloudflared/config.yml run &
 
-# Cấu hình tường lửa UFW (chỉ cần SSH, không cần mở port 80/443)
+# Cấu hình tường lửa UFW (chỉ cần SSH)
 echo "Đang cấu hình tường lửa..."
 apt install -y ufw
 ufw allow 22
@@ -146,4 +168,4 @@ echo "Truy cập n8n tại: https://${DOMAIN}"
 echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
 echo "Dữ liệu PostgreSQL được lưu trong ~/n8n/postgres_data"
 echo "Cloudflare Tunnel đang chạy với Tunnel ID: ${TUNNEL_ID}"
-echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson"
+echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson, chỉnh sửa bởi Grok 3"
