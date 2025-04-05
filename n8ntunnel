@@ -40,9 +40,6 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io
-# Kích hoạt Docker tự động khởi động
-systemctl enable docker
-systemctl start docker
 
 # Cài đặt Docker Compose
 echo "Đang cài đặt Docker Compose..."
@@ -54,7 +51,7 @@ echo "Đang tạo thư mục và file cấu hình..."
 mkdir -p ~/n8n
 cd ~/n8n
 
-# Tạo file docker-compose.yml
+# Tạo file docker-compose.yml với systemd integration
 cat <<EOF > docker-compose.yml
 version: "3.8"
 
@@ -103,15 +100,10 @@ networks:
     driver: bridge
 EOF
 
-# Khởi động Docker Compose
-echo "Đang khởi động n8n và PostgreSQL..."
-docker-compose up -d
-
-# Tạo systemd service cho Docker Compose
-echo "Đang cấu hình Docker Compose tự động khởi động..."
-cat <<EOF > /etc/systemd/system/n8n-docker-compose.service
+# Tạo systemd service cho docker-compose
+cat <<EOF > /etc/systemd/system/n8n.service
 [Unit]
-Description=n8n Docker Compose Service
+Description=n8n Workflow Automation Tool
 Requires=docker.service
 After=docker.service
 
@@ -121,14 +113,11 @@ RemainAfterExit=yes
 WorkingDirectory=/root/n8n
 ExecStart=/usr/local/bin/docker-compose up -d
 ExecStop=/usr/local/bin/docker-compose down
-User=root
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable n8n-docker-compose
-systemctl start n8n-docker-compose
 
 # Cài đặt Cloudflare Tunnel (cloudflared)
 echo "Đang cài đặt Cloudflare Tunnel..."
@@ -142,19 +131,20 @@ echo "Vui lòng mở link sau trong trình duyệt để xác thực Cloudflare,
 echo "Đã hoàn tất xác thực? Nhấn Enter để tiếp tục..."
 read
 
-# Tự động tạo tunnel với tên dựa trên Tunnel ID
+# Tạo tunnel với tên ngẫu nhiên để tránh trùng lặp
 echo "Đang tạo Cloudflare Tunnel..."
-TUNNEL_OUTPUT=$(/usr/local/bin/cloudflared tunnel create n8n)
+TIMESTAMP=$(date +%s)
+TUNNEL_NAME="n8n-${TIMESTAMP}"
+TUNNEL_OUTPUT=$(/usr/local/bin/cloudflared tunnel create "${TUNNEL_NAME}")
 TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 if [ -z "$TUNNEL_ID" ]; then
   echo "Không thể lấy Tunnel ID. Vui lòng kiểm tra lại hoặc tạo tunnel thủ công."
   exit 1
 fi
-TUNNEL_NAME="n8n-${TUNNEL_ID}"
 echo "Tunnel Name: ${TUNNEL_NAME}"
 echo "Tunnel ID: ${TUNNEL_ID}"
 
-# Tạo file cấu hình Cloudflare Tunnel với định dạng YAML chính xác
+# Tạo file cấu hình Cloudflare Tunnel
 mkdir -p ~/.cloudflared
 cat <<EOF > ~/.cloudflared/config.yml
 tunnel: ${TUNNEL_ID}
@@ -195,11 +185,16 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable cloudflared
-systemctl start cloudflared
 
-# Cấu hình tường lửa UFW (chỉ cần SSH)
+# Kích hoạt và khởi động các service
+echo "Đang kích hoạt các dịch vụ..."
+systemctl daemon-reload
+systemctl enable n8n.service
+systemctl enable cloudflared.service
+systemctl start n8n.service
+systemctl start cloudflared.service
+
+# Cấu hình tường lửa UFW
 echo "Đang cấu hình tường lửa..."
 apt install -y ufw
 ufw allow 22
@@ -212,4 +207,5 @@ echo "Dữ liệu n8n được lưu trong ~/n8n/n8n_data"
 echo "Dữ liệu PostgreSQL được lưu trong ~/n8n/postgres_data"
 echo "Cloudflare Tunnel đang chạy với Tunnel Name: ${TUNNEL_NAME}"
 echo "Tunnel ID: ${TUNNEL_ID}"
-echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson, chỉnh sửa bởi Grok 3"
+echo "Các dịch vụ sẽ tự động khởi động khi server reboot"
+echo "Script được tạo bởi Hà Duy Sơn - Telegram: @haduyson"
