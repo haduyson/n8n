@@ -121,8 +121,10 @@ EOF
 
 # Cài đặt Cloudflare Tunnel (cloudflared)
 echo "Đang cài đặt Cloudflare Tunnel..."
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
+curl -L https://pkg.cloudflare.com/cloudflare-main.gpg | apt-key add -
+echo "deb [arch=$(dpkg --print-architecture)] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflared.list
+apt update
+apt install -y cloudflared
 
 # Tự động đăng nhập Cloudflare
 echo "Đang thực hiện đăng nhập Cloudflare..."
