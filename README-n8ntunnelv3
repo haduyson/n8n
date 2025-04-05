@@ -1,0 +1,27 @@
+# Sử dụng để cài đặt n8n trên server nội bộ và ánh xạ ra domain với Cloudflare Tunnel
+# Tải file về server
+wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/n8ntunnelv3
+
+# Cấp quyền thực thi cho file:
+chmod +x n8ntunnelv3
+
+# Chạy Scripts với quyền root
+sudo ./n8ntunnelv3
+
+# Nhập thông tin cần thiết: Domain - Email - Tên DB - Username DB - Password DB
+# Cần cấu hình CNAME add record bằng tay trên Cloudflare (nhớ để ý cái ID Tunnel để add cho đúng)
+
+# Đảm bảo mở port 80 và 443 trên firewall (v3 này sẽ tự động bật 2 port này)
+ufw allow 80
+ufw allow 443
+
+# File cấu hình quan trọng được lưu tại 
+/opt/n8n/docker-compose.yml (Docker) 
+/etc/nginx/sites-available/n8n (Nginx).
+~/.cloudflared/config.yml (Tunnel)
+
+
+# Xoá những gì đã cài đặt (n8n và mọi thứ liên quan đến nó)
+wget https://raw.githubusercontent.com/haduyson/n8n/refs/heads/main/removen8ntunnel.sh
+chmod +x removen8ntunnel.sh
+sudo ./removen8ntunnel.sh
