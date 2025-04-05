@@ -7,6 +7,12 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Kiểm tra hệ điều hành tương thích
+if ! command -v apt >/dev/null 2>&1; then
+  echo "Script này chỉ hỗ trợ các hệ điều hành dựa trên Debian/Ubuntu (yêu cầu APT)."
+  exit 1
+fi
+
 # Cập nhật hệ thống
 echo "Đang cập nhật hệ thống..."
 apt update && apt upgrade -y
@@ -51,7 +57,7 @@ echo "Đang tạo thư mục và file cấu hình..."
 mkdir -p ~/n8n
 cd ~/n8n
 
-# Tạo file docker-compose.yml với systemd integration
+# Tạo file docker-compose.yml
 cat <<EOF > docker-compose.yml
 version: "3.8"
 
@@ -122,14 +128,20 @@ EOF
 # Cài đặt Cloudflare Tunnel (cloudflared)
 echo "Đang cài đặt Cloudflare Tunnel..."
 curl -L https://pkg.cloudflare.com/cloudflare-main.gpg | apt-key add -
-echo "deb [arch=$(dpkg --print-architecture)] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflared.list
+echo "deb [arch=$(dpkg --print-architecture)] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflared.list > /dev/null
 apt update
 apt install -y cloudflared
+
+# Kiểm tra cloudflared đã cài thành công chưa
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "Không thể cài đặt cloudflared. Vui lòng kiểm tra kết nối mạng hoặc repository."
+  exit 1
+fi
 
 # Tự động đăng nhập Cloudflare
 echo "Đang thực hiện đăng nhập Cloudflare..."
 echo "Vui lòng mở link sau trong trình duyệt để xác thực Cloudflare, sau đó quay lại đây:"
-/usr/local/bin/cloudflared login
+cloudflared login
 echo "Đã hoàn tất xác thực? Nhấn Enter để tiếp tục..."
 read
 
@@ -137,7 +149,7 @@ read
 echo "Đang tạo Cloudflare Tunnel..."
 TIMESTAMP=$(date +%s)
 TUNNEL_NAME="n8n-${TIMESTAMP}"
-TUNNEL_OUTPUT=$(/usr/local/bin/cloudflared tunnel create "${TUNNEL_NAME}")
+TUNNEL_OUTPUT=$(cloudflared tunnel create "${TUNNEL_NAME}")
 TUNNEL_ID=$(echo "$TUNNEL_OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 if [ -z "$TUNNEL_ID" ]; then
   echo "Không thể lấy Tunnel ID. Vui lòng kiểm tra lại hoặc tạo tunnel thủ công."
@@ -180,7 +192,7 @@ Description=Cloudflare Tunnel
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/cloudflared --config /root/.cloudflared/config.yml tunnel run
+ExecStart=/usr/bin/cloudflared --config /root/.cloudflared/config.yml tunnel run
 Restart=on-failure
 User=root
 
